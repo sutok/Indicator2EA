@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find ~/Desktop ~/Downloads -name *indicator* -o -name *.mq4)",
+      "Bash(find /Users/kazuh -name *.mq4 -o -name *.mqh -o -name *.mq5)",
+      "Bash(find /Users/kazuh/Documents/GitHub/MQL5/Include -name *.mqh)"
+    ]
+  }
+}
