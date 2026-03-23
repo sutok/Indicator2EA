@@ -5,7 +5,7 @@
 //|        検出結果をExpertタブへ出力して動作確認を行う               |
 //+------------------------------------------------------------------+
 #property copyright "indicator2EA Project"
-#property version   "1.00"
+#property version   "1.02"
 #property strict
 
 //+------------------------------------------------------------------+
@@ -13,94 +13,48 @@
 //+------------------------------------------------------------------+
 enum ENUM_SIGNAL_MODE
 {
-   MODE_BUFFER = 0,   // バッファ型（iCustomで読み取り）
-   MODE_OBJECT = 1    // オブジェクト型（チャートオブジェクト走査）
+   MODE_BUFFER = 0,   // バッファ型(iCustomで読み取り)
+   MODE_OBJECT = 1    // オブジェクト型(チャートオブジェクト走査)
 };
 
 //+------------------------------------------------------------------+
 //| 入力パラメーター                                                  |
 //+------------------------------------------------------------------+
-input string            InpEALabel        = "SignalMonitor";   // EA表示名（ログ用）
+input string            InpEALabel        = "SignalMonitor";   // EA表示名(ログ用)
 input ENUM_SIGNAL_MODE  InpSignalMode     = MODE_BUFFER;       // シグナル検出方式
 
 //--- バッファ型設定
-input string InpIndicatorName  = "";     // インジケーター名（Indicators/以下のパス）
-input string InpIndicatorParams = "";    // パラメーター（カンマ区切り 例: 14,20,1.5）
-input int    InpBuyBufferIndex  = 0;     // Buyシグナルのバッファ番号
-input int    InpSellBufferIndex = 1;     // Sellシグナルのバッファ番号
-input int    InpCheckShift      = 1;     // 参照バー（0=現在足, 1=確定足）
+input string InpIndicatorName   = "";     // インジケーター名(Indicators以下のパス)
+input string InpIndicatorParams = "";     // パラメーター(カンマ区切り 例: 14,20,1.5)
+input int    InpBuyBufferIndex  = 0;      // Buyシグナルのバッファ番号
+input int    InpSellBufferIndex = 1;      // Sellシグナルのバッファ番号
+input int    InpCheckShift      = 1;      // 参照バー(0=現在足, 1=確定足)
 
 //--- オブジェクト型設定
-input string InpObjNameFilter   = "";    // オブジェクト名フィルター（空=全対象）
-input int    InpBuyArrowCode    = 233;   // Buy矢印コード（233=上向き）
-input int    InpSellArrowCode   = 234;   // Sell矢印コード（234=下向き）
-input color  InpBuyArrowColor   = clrNONE;  // Buy矢印の色（clrNONE=色判定しない）
-input color  InpSellArrowColor  = clrNONE;  // Sell矢印の色（clrNONE=色判定しない）
+input string InpObjNameFilter   = "";     // オブジェクト名フィルター(空=全対象)
+input int    InpBuyArrowCode    = 233;    // Buy矢印コード(233=上向き)
+input int    InpSellArrowCode   = 234;    // Sell矢印コード(234=下向き)
+input color  InpBuyArrowColor   = clrNONE;  // Buy矢印の色(clrNONE=色判定しない)
+input color  InpSellArrowColor  = clrNONE;  // Sell矢印の色(clrNONE=色判定しない)
 
 //--- 共通設定
-input bool   InpEveryTick       = false; // 毎ティック監視（false=新規バーのみ）
-input bool   InpScanAllBuffers  = false; // 全バッファ値を一括表示（デバッグ用）
-input int    InpMaxBufferScan   = 8;     // 一括表示時の最大バッファ数
+input bool   InpEveryTick       = false;  // 毎ティック監視(false=新規バーのみ)
+input bool   InpScanAllBuffers  = false;  // 全バッファ値を一括表示(デバッグ用)
+input int    InpMaxBufferScan   = 8;      // 一括表示時の最大バッファ数
 
 //+------------------------------------------------------------------+
 //| グローバル変数                                                    |
 //+------------------------------------------------------------------+
-datetime g_lastBarTime = 0;
-int      g_totalSignals = 0;
+datetime g_lastBarTime    = 0;
+int      g_totalSignals   = 0;
+bool     g_initialized    = false;  // 初回ティックで設定情報を表示済みか
 
 //+------------------------------------------------------------------+
-//| 初期化                                                            |
+//| 初期化 - 最小限にとどめ、外部リソースへのアクセスは行わない       |
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   log("====================================");
-   log("シグナルモニター 起動");
-   log("====================================");
-   log("通貨ペア: " + Symbol() + " / 時間足: " + PeriodToStr(Period()));
-
-   if(InpSignalMode == MODE_BUFFER)
-   {
-      log("検出方式: バッファ型");
-      if(StringLen(InpIndicatorName) == 0)
-      {
-         log("警告: インジケーター名が未設定です。パラメーターを設定してください");
-         log("　→ EAプロパティ → パラメーターの入力 → インジケーター名 を設定");
-      }
-      else
-      {
-         log("インジケーター: " + InpIndicatorName);
-         log("パラメーター: " + (StringLen(InpIndicatorParams) > 0 ? InpIndicatorParams : "(なし)"));
-         log("Buyバッファ: " + IntegerToString(InpBuyBufferIndex)
-           + " / Sellバッファ: " + IntegerToString(InpSellBufferIndex));
-         log("参照バー: " + IntegerToString(InpCheckShift)
-           + (InpCheckShift == 0 ? "（現在足・未確定）" : "（確定足）"));
-
-         // 初回読み取りテスト
-         if(!TestBufferRead())
-         {
-            log("警告: 初回バッファ読み取りに失敗。インジケーター名・パラメーターを確認してください");
-         }
-      }
-   }
-   else
-   {
-      log("検出方式: オブジェクト型");
-      log("名前フィルター: " + (StringLen(InpObjNameFilter) > 0 ? InpObjNameFilter : "(なし・全対象)"));
-      log("Buy矢印コード: " + IntegerToString(InpBuyArrowCode)
-        + " / Sell矢印コード: " + IntegerToString(InpSellArrowCode));
-      if(InpBuyArrowColor != clrNONE)
-         log("Buy矢印色: " + ColorToString(InpBuyArrowColor));
-      if(InpSellArrowColor != clrNONE)
-         log("Sell矢印色: " + ColorToString(InpSellArrowColor));
-
-      // 初回オブジェクトスキャン
-      int arrowCount = CountArrowObjects();
-      log("チャート上のArrowオブジェクト数: " + IntegerToString(arrowCount));
-   }
-
-   log("監視モード: " + (InpEveryTick ? "毎ティック" : "新規バーのみ"));
-   log("====================================");
-
+   Print("[", InpEALabel, "] シグナルモニター 起動");
    return INIT_SUCCEEDED;
 }
 
@@ -109,8 +63,8 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-   log("シグナルモニター 停止（検出シグナル合計: "
-     + IntegerToString(g_totalSignals) + "）");
+   Print("[", InpEALabel, "] シグナルモニター 停止 (検出シグナル合計: ",
+         g_totalSignals, " / 終了理由: ", reason, ")");
 }
 
 //+------------------------------------------------------------------+
@@ -118,7 +72,14 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
-   // 新規バー判定
+   //--- 初回ティックで設定情報を表示
+   if(!g_initialized)
+   {
+      PrintSettings();
+      g_initialized = true;
+   }
+
+   //--- 新規バー判定
    if(!InpEveryTick)
    {
       datetime currentBarTime = iTime(NULL, 0, 0);
@@ -127,40 +88,63 @@ void OnTick()
       g_lastBarTime = currentBarTime;
    }
 
-   // 方式別にシグナル検出
+   //--- 方式別にシグナル検出
    if(InpSignalMode == MODE_BUFFER)
    {
-      if(StringLen(InpIndicatorName) == 0) return; // 未設定なら何もしない
+      if(StringLen(InpIndicatorName) == 0) return;
       CheckBufferSignals();
    }
    else
+   {
       CheckObjectSignals();
+   }
 }
 
 //+------------------------------------------------------------------+
-//| バッファ型：初回読み取りテスト                                    |
+//| 設定情報の表示(初回ティック時に実行)                              |
 //+------------------------------------------------------------------+
-bool TestBufferRead()
+void PrintSettings()
 {
-   double val = ReadBuffer(InpBuyBufferIndex, InpCheckShift);
-   int err = GetLastError();
-   if(err != 0)
+   Print("[", InpEALabel, "] ====================================");
+   Print("[", InpEALabel, "] 通貨ペア: ", Symbol(), " / 時間足: ", PeriodToStr(Period()));
+
+   if(InpSignalMode == MODE_BUFFER)
    {
-      log("iCustom呼び出しエラー: " + IntegerToString(err));
-      return false;
+      Print("[", InpEALabel, "] 検出方式: バッファ型");
+      if(StringLen(InpIndicatorName) == 0)
+      {
+         Print("[", InpEALabel, "] 警告: インジケーター名が未設定です");
+      }
+      else
+      {
+         Print("[", InpEALabel, "] インジケーター: ", InpIndicatorName);
+         Print("[", InpEALabel, "] パラメーター: ",
+               (StringLen(InpIndicatorParams) > 0 ? InpIndicatorParams : "(なし)"));
+         Print("[", InpEALabel, "] Buyバッファ: ", InpBuyBufferIndex,
+               " / Sellバッファ: ", InpSellBufferIndex);
+         Print("[", InpEALabel, "] 参照バー: ", InpCheckShift,
+               (InpCheckShift == 0 ? " (現在足)" : " (確定足)"));
+      }
+   }
+   else
+   {
+      Print("[", InpEALabel, "] 検出方式: オブジェクト型");
+      Print("[", InpEALabel, "] 名前フィルター: ",
+            (StringLen(InpObjNameFilter) > 0 ? InpObjNameFilter : "(なし/全対象)"));
+      Print("[", InpEALabel, "] Buy矢印コード: ", InpBuyArrowCode,
+            " / Sell矢印コード: ", InpSellArrowCode);
    }
 
-   log("初回テスト読み取り成功 — バッファ" + IntegerToString(InpBuyBufferIndex)
-     + "[shift=" + IntegerToString(InpCheckShift) + "] = " + DoubleToString(val, 5));
-   return true;
+   Print("[", InpEALabel, "] 監視モード: ", (InpEveryTick ? "毎ティック" : "新規バーのみ"));
+   Print("[", InpEALabel, "] ====================================");
 }
 
 //+------------------------------------------------------------------+
-//| バッファ型：シグナル検出                                          |
+//| バッファ型: シグナル検出                                          |
 //+------------------------------------------------------------------+
 void CheckBufferSignals()
 {
-   // 全バッファ一括表示モード
+   //--- 全バッファ一括表示モード
    if(InpScanAllBuffers)
    {
       ScanAllBuffers();
@@ -170,30 +154,27 @@ void CheckBufferSignals()
    double buyVal  = ReadBuffer(InpBuyBufferIndex, InpCheckShift);
    double sellVal = ReadBuffer(InpSellBufferIndex, InpCheckShift);
 
-   bool isBuy  = IsValidSignal(buyVal);
-   bool isSell = IsValidSignal(sellVal);
-
-   if(isBuy)
+   if(IsValidSignal(buyVal))
    {
       g_totalSignals++;
-      log("★ BUYシグナル検出 | バッファ[" + IntegerToString(InpBuyBufferIndex) + "]="
-        + DoubleToString(buyVal, 5)
-        + " | バー時刻: " + TimeToString(iTime(NULL, 0, InpCheckShift))
-        + " | 検出#" + IntegerToString(g_totalSignals));
+      Print("[", InpEALabel, "] * BUYシグナル検出 | バッファ[", InpBuyBufferIndex, "]=",
+            DoubleToString(buyVal, 5),
+            " | バー時刻: ", TimeToString(iTime(NULL, 0, InpCheckShift)),
+            " | 検出#", g_totalSignals);
    }
 
-   if(isSell)
+   if(IsValidSignal(sellVal))
    {
       g_totalSignals++;
-      log("★ SELLシグナル検出 | バッファ[" + IntegerToString(InpSellBufferIndex) + "]="
-        + DoubleToString(sellVal, 5)
-        + " | バー時刻: " + TimeToString(iTime(NULL, 0, InpCheckShift))
-        + " | 検出#" + IntegerToString(g_totalSignals));
+      Print("[", InpEALabel, "] * SELLシグナル検出 | バッファ[", InpSellBufferIndex, "]=",
+            DoubleToString(sellVal, 5),
+            " | バー時刻: ", TimeToString(iTime(NULL, 0, InpCheckShift)),
+            " | 検出#", g_totalSignals);
    }
 }
 
 //+------------------------------------------------------------------+
-//| バッファ型：全バッファ一括スキャン（デバッグ用）                  |
+//| バッファ型: 全バッファ一括スキャン(デバッグ用)                    |
 //+------------------------------------------------------------------+
 void ScanAllBuffers()
 {
@@ -215,81 +196,75 @@ void ScanAllBuffers()
          hasSignal = true;
       }
 
-      line += "[" + IntegerToString(i) + "]=" + valStr + " ";
+      line = line + "[" + IntegerToString(i) + "]=" + valStr + " ";
    }
 
-   // 値のあるバッファが存在する場合のみ出力（ログを見やすくするため）
    if(hasSignal)
-      log(line);
+      Print("[", InpEALabel, "] ", line);
 }
 
 //+------------------------------------------------------------------+
-//| バッファ型：iCustom呼び出し                                       |
+//| バッファ型: iCustom呼び出し                                       |
 //| パラメーター文字列をパースして各型に対応                          |
 //+------------------------------------------------------------------+
 double ReadBuffer(int bufferIndex, int shift)
 {
-   // パラメーターなしの場合
    if(StringLen(InpIndicatorParams) == 0)
       return iCustom(NULL, 0, InpIndicatorName, bufferIndex, shift);
 
-   // カンマ区切りパラメーターをパースして呼び出し
-   // MQL4のiCustomは可変引数のため、パラメーター数に応じた呼び出しが必要
    string params[];
-   int count = StringSplitByComma(InpIndicatorParams, params);
+   int count = SplitString(InpIndicatorParams, ",", params);
 
-   // パラメーター数に応じてiCustomを呼び分け（MQL4は可変引数を動的に渡せないため）
    if(count == 1)
       return iCustom(NULL, 0, InpIndicatorName,
-               ParseParam(params[0]),
+               ToDouble(params[0]),
                bufferIndex, shift);
    if(count == 2)
       return iCustom(NULL, 0, InpIndicatorName,
-               ParseParam(params[0]), ParseParam(params[1]),
+               ToDouble(params[0]), ToDouble(params[1]),
                bufferIndex, shift);
    if(count == 3)
       return iCustom(NULL, 0, InpIndicatorName,
-               ParseParam(params[0]), ParseParam(params[1]),
-               ParseParam(params[2]),
+               ToDouble(params[0]), ToDouble(params[1]),
+               ToDouble(params[2]),
                bufferIndex, shift);
    if(count == 4)
       return iCustom(NULL, 0, InpIndicatorName,
-               ParseParam(params[0]), ParseParam(params[1]),
-               ParseParam(params[2]), ParseParam(params[3]),
+               ToDouble(params[0]), ToDouble(params[1]),
+               ToDouble(params[2]), ToDouble(params[3]),
                bufferIndex, shift);
    if(count == 5)
       return iCustom(NULL, 0, InpIndicatorName,
-               ParseParam(params[0]), ParseParam(params[1]),
-               ParseParam(params[2]), ParseParam(params[3]),
-               ParseParam(params[4]),
+               ToDouble(params[0]), ToDouble(params[1]),
+               ToDouble(params[2]), ToDouble(params[3]),
+               ToDouble(params[4]),
                bufferIndex, shift);
    if(count == 6)
       return iCustom(NULL, 0, InpIndicatorName,
-               ParseParam(params[0]), ParseParam(params[1]),
-               ParseParam(params[2]), ParseParam(params[3]),
-               ParseParam(params[4]), ParseParam(params[5]),
+               ToDouble(params[0]), ToDouble(params[1]),
+               ToDouble(params[2]), ToDouble(params[3]),
+               ToDouble(params[4]), ToDouble(params[5]),
                bufferIndex, shift);
    if(count == 7)
       return iCustom(NULL, 0, InpIndicatorName,
-               ParseParam(params[0]), ParseParam(params[1]),
-               ParseParam(params[2]), ParseParam(params[3]),
-               ParseParam(params[4]), ParseParam(params[5]),
-               ParseParam(params[6]),
+               ToDouble(params[0]), ToDouble(params[1]),
+               ToDouble(params[2]), ToDouble(params[3]),
+               ToDouble(params[4]), ToDouble(params[5]),
+               ToDouble(params[6]),
                bufferIndex, shift);
    if(count == 8)
       return iCustom(NULL, 0, InpIndicatorName,
-               ParseParam(params[0]), ParseParam(params[1]),
-               ParseParam(params[2]), ParseParam(params[3]),
-               ParseParam(params[4]), ParseParam(params[5]),
-               ParseParam(params[6]), ParseParam(params[7]),
+               ToDouble(params[0]), ToDouble(params[1]),
+               ToDouble(params[2]), ToDouble(params[3]),
+               ToDouble(params[4]), ToDouble(params[5]),
+               ToDouble(params[6]), ToDouble(params[7]),
                bufferIndex, shift);
 
-   log("警告: パラメーター数が多すぎます（最大8）。パラメーターなしで実行します");
    return iCustom(NULL, 0, InpIndicatorName, bufferIndex, shift);
 }
 
 //+------------------------------------------------------------------+
-//| オブジェクト型：シグナル検出                                      |
+//| オブジェクト型: シグナル検出                                      |
 //+------------------------------------------------------------------+
 void CheckObjectSignals()
 {
@@ -300,91 +275,63 @@ void CheckObjectSignals()
    {
       string name = ObjectName(i);
 
-      // オブジェクトタイプがArrowであること
       if(ObjectType(name) != OBJ_ARROW)
          continue;
 
-      // 名前フィルター
       if(StringLen(InpObjNameFilter) > 0)
       {
          if(StringFind(name, InpObjNameFilter) < 0)
             continue;
       }
 
-      // 対象バーの時刻と一致するか
       datetime objTime = (datetime)ObjectGet(name, OBJPROP_TIME1);
       if(objTime != targetTime)
          continue;
 
-      // 矢印のプロパティ取得
       int    arrowCode  = (int)ObjectGet(name, OBJPROP_ARROWCODE);
       double arrowPrice = ObjectGet(name, OBJPROP_PRICE1);
       color  arrowColor = (color)ObjectGet(name, OBJPROP_COLOR);
 
-      // Buy/Sell判定
-      string direction = JudgeObjectDirection(arrowCode, arrowColor);
+      string direction = JudgeDirection(arrowCode, arrowColor);
 
       g_totalSignals++;
-      log("★ " + direction + "シグナル検出（オブジェクト型）"
-        + " | 名前: " + name
-        + " | コード: " + IntegerToString(arrowCode)
-        + " | 色: " + ColorToString(arrowColor)
-        + " | 価格: " + DoubleToString(arrowPrice, (int)MarketInfo(Symbol(), MODE_DIGITS))
-        + " | バー時刻: " + TimeToString(objTime)
-        + " | 検出#" + IntegerToString(g_totalSignals));
+      Print("[", InpEALabel, "] * ", direction, "シグナル検出(オブジェクト型)",
+            " | 名前: ", name,
+            " | コード: ", arrowCode,
+            " | 色: ", ColorToString(arrowColor),
+            " | 価格: ", DoubleToString(arrowPrice, (int)MarketInfo(Symbol(), MODE_DIGITS)),
+            " | バー時刻: ", TimeToString(objTime),
+            " | 検出#", g_totalSignals);
    }
 }
 
 //+------------------------------------------------------------------+
-//| オブジェクト型：矢印の方向判定                                    |
+//| オブジェクト型: 矢印の方向判定                                    |
 //+------------------------------------------------------------------+
-string JudgeObjectDirection(int arrowCode, color arrowColor)
+string JudgeDirection(int arrowCode, color arrowColor)
 {
-   // 色による判定（設定されている場合に優先）
-   if(InpBuyArrowColor != clrNONE && arrowColor == InpBuyArrowColor)
-      return "BUY";
-   if(InpSellArrowColor != clrNONE && arrowColor == InpSellArrowColor)
-      return "SELL";
-
-   // 矢印コードによる判定
-   if(arrowCode == InpBuyArrowCode)
-      return "BUY";
-   if(arrowCode == InpSellArrowCode)
-      return "SELL";
-
-   return "不明(" + IntegerToString(arrowCode) + ")";
+   if(InpBuyArrowColor  != clrNONE && arrowColor == InpBuyArrowColor)  return "BUY";
+   if(InpSellArrowColor != clrNONE && arrowColor == InpSellArrowColor) return "SELL";
+   if(arrowCode == InpBuyArrowCode)  return "BUY";
+   if(arrowCode == InpSellArrowCode) return "SELL";
+   return "不明(code=" + IntegerToString(arrowCode) + ")";
 }
 
 //+------------------------------------------------------------------+
-//| オブジェクト型：Arrowオブジェクト数のカウント                     |
-//+------------------------------------------------------------------+
-int CountArrowObjects()
-{
-   int count = 0;
-   int total = ObjectsTotal();
-   for(int i = 0; i < total; i++)
-   {
-      if(ObjectType(ObjectName(i)) == OBJ_ARROW)
-         count++;
-   }
-   return count;
-}
-
-//+------------------------------------------------------------------+
-//| ユーティリティ：シグナル値の有効判定                              |
+//| シグナル値の有効判定                                              |
 //+------------------------------------------------------------------+
 bool IsValidSignal(double value)
 {
-   if(value == EMPTY_VALUE)  return false;
-   if(value >= DBL_MAX - 1)  return false;
-   if(value == 0.0)          return false;
+   if(value == EMPTY_VALUE) return false;
+   if(value >= DBL_MAX - 1) return false;
+   if(value == 0.0)         return false;
    return true;
 }
 
 //+------------------------------------------------------------------+
-//| ユーティリティ：パラメーター文字列→double変換                    |
+//| 文字列をdoubleに変換(前後の空白除去付き)                         |
 //+------------------------------------------------------------------+
-double ParseParam(string s)
+double ToDouble(string s)
 {
    StringTrimLeft(s);
    StringTrimRight(s);
@@ -392,16 +339,16 @@ double ParseParam(string s)
 }
 
 //+------------------------------------------------------------------+
-//| ユーティリティ：カンマ区切り文字列の分割                          |
+//| カンマ区切り文字列の分割                                          |
 //+------------------------------------------------------------------+
-int StringSplitByComma(string text, string &result[])
+int SplitString(string text, string delimiter, string &result[])
 {
    int count = 0;
    string remaining = text;
 
    while(StringLen(remaining) > 0)
    {
-      int pos = StringFind(remaining, ",");
+      int pos = StringFind(remaining, delimiter);
       ArrayResize(result, count + 1);
 
       if(pos < 0)
@@ -420,7 +367,7 @@ int StringSplitByComma(string text, string &result[])
 }
 
 //+------------------------------------------------------------------+
-//| ユーティリティ：時間足を文字列に変換                              |
+//| 時間足を文字列に変換                                              |
 //+------------------------------------------------------------------+
 string PeriodToStr(int period)
 {
@@ -437,13 +384,5 @@ string PeriodToStr(int period)
       case PERIOD_MN1: return "MN1";
       default:         return "M" + IntegerToString(period);
    }
-}
-
-//+------------------------------------------------------------------+
-//| ユーティリティ：ログ出力                                          |
-//+------------------------------------------------------------------+
-void log(string msg)
-{
-   Print("[" + InpEALabel + "] " + msg);
 }
 //+------------------------------------------------------------------+
